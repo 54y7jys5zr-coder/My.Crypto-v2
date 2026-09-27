@@ -1,6 +1,6 @@
 {
-  "name": "Crypto Portfolio",
-  "short_name": "Portfolio",
+  "name": "My.Crypto",
+  "short_name": "My.Crypto",
   "description": "Effective cost, value and P/L for your crypto portfolio (strict-FIFO).",
   "start_url": "./index.html",
   "scope": "./",

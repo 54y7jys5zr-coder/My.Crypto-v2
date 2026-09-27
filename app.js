@@ -1,4 +1,4 @@
-/* Crypto Portfolio PWA — UI + live prices + FX + chart. Engine in engine.js. */
+/* My.Crypto — UI + live prices + FX + chart. Engine in engine.js. */
 (() => {
 "use strict";
 const $ = s => document.querySelector(s);
@@ -591,7 +591,7 @@ async function shareSnapshot(){
   const txt=`My crypto portfolio — value ${fmtMoney(t.v)}, P/L ${fmtMoney(t.u)} (${pct(t.ret)}). `+
             `Cost basis ${fmtMoney(t.c)}.`;
   try{
-    if(navigator.share){ await navigator.share({title:"Crypto Portfolio", text:txt}); return; }
+    if(navigator.share){ await navigator.share({title:"My.Crypto", text:txt}); return; }
   }catch(e){ if(e && e.name==="AbortError") return; }
   // fallback: copy to clipboard
   try{ await navigator.clipboard.writeText(txt); toast("Summary copied to clipboard"); }
