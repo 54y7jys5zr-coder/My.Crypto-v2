@@ -19,7 +19,6 @@ const state = {
   timer: null,
   freshTimer: null,
   chart: null,
-  allocChart: null,
   chartLoaded: false,
   chartBusy: false,
   hist: null,          // cached 365d history
@@ -194,8 +193,16 @@ function updateFreshness(){
   el.style.color = stale ? "var(--red)" : "";
 }
 
-/* ---------- summary tab ---------- */
-function renderSummaryTab(){
+/* deterministic per-asset hue for the holdings list avatars */
+const AVATAR_HUES=[258,190,152,42,330,210,282,18,96,222];
+function assetHue(sym){
+  const s=String(sym||"?"); let h=0;
+  for(let i=0;i<s.length;i++) h=(h*31+s.charCodeAt(i))>>>0;
+  return AVATAR_HUES[h%AVATAR_HUES.length];
+}
+
+/* ---------- overview (home) ---------- */
+function renderOverview(){
   const rows=computeRows(); const t=totals(rows);
   const m=state.data.meta;
   const nm = state.view===3 ? "Invested Only" : "All Holdings";
@@ -206,59 +213,49 @@ function renderSummaryTab(){
   pl.style.color = plColorOf(t.u);
   $("#sumHeroCost").textContent=fmtMoney(t.c);
 
-  // lifetime P/L (realized + unrealized) + free-coins share (#4/#12)
+  // lifetime P/L (realized + unrealized) + free-coins share
   const lt=lifetimePL(); const fc=freeCoinsShare(); const ltEl=$("#heroLifetime");
   if(ltEl){ const c=plColorOf(lt.total);
     ltEl.innerHTML = `<span class="lt-k">Lifetime P/L</span> `+
-      `<span class="lt-v" style="color:${c}">${arrowOf(lt.total)} ${fmtMoney(lt.total)}</span>`+
+      (lt.haveUnreal
+        ? `<span class="lt-v" style="color:${c}">${arrowOf(lt.total)} ${fmtMoney(lt.total)}</span>`
+        : `<span class="lt-v muted">—</span>`)+
       (fc!=null?` <span class="muted">· ${fc.toFixed(0)}% free coins</span>`:"");
   }
-  const plColor = plColorOf(t.u);
   $("#sumStats").innerHTML=`
-    <div class="stat"><div class="k">Total value</div><div class="v">${fmtMoney(t.v)}</div>
-      <div class="sub muted">${nm}</div></div>
-    <div class="stat"><div class="k">Profit / Loss</div><div class="v" style="color:${plColor}">${t.u==null?"—":fmtMoney(t.u)}</div>
-      <div class="sub" style="color:${plColor}">${arrowOf(t.u)} ${pct(t.ret)}</div></div>
     <div class="stat"><div class="k">Net invested</div><div class="v">${fmtMoney(m.net_deposited)}</div>
-      <div class="sub muted">cash in − out</div></div>
-    <div class="stat"><div class="k">Realized profit</div><div class="v">${fmtMoney(m.total_realized)}</div>
-      <div class="sub muted">already sold</div></div>`;
+      <div class="sub">cash in − out</div></div>
+    <div class="stat"><div class="k">Realized</div><div class="v" style="color:${plColorOf(m.total_realized)}">${fmtMoney(m.total_realized)}</div>
+      <div class="sub">already sold</div></div>
+    <div class="stat"><div class="k">Free coins</div><div class="v">${fc==null?"—":fc.toFixed(0)+"%"}</div>
+      <div class="sub">of holdings</div></div>`;
 
-  const priced=rows.filter(r=>r.ret!=null);
-  const byRet=[...priced].sort((a,b)=>b.ret-a.ret);
-  const winners=byRet.slice(0,3), losers=byRet.slice(-3).reverse();
-  const mini=(r)=>{ const c=plColorOf(r.unreal);
-    // subtle tint that stays readable in both themes: ~12% of the P/L color over the card surface
-    const tint = r.unreal==null ? "var(--card)" : `color-mix(in srgb, ${c} 12%, var(--card))`;
-    const barC = ratioColor(r.ratio).c;
-    return `<button class="mini" data-asset="${esc(r.asset)}" style="background:${tint}">
-      <div class="bar" style="background:${barC}"></div>
-      <div class="sym">${esc(r.asset)}</div>
-      <div class="ret" style="color:${c}">${arrowOf(r.unreal)} ${pct(r.ret)}</div>
-      <div class="v">${fmtMoneyCompact(r.value)}</div></button>`; };
-  $("#sumWinners").innerHTML = winners.length?winners.map(mini).join(""):'<div class="v muted">No priced assets.</div>';
-  $("#sumLosers").innerHTML  = losers.length? losers.map(mini).join(""):'<div class="v muted">No priced assets.</div>';
-
-  renderAllocDonut(rows);
+  renderHoldings();
 }
 
-/* allocation donut (#7) */
-function renderAllocDonut(rows){
-  const withVal=rows.filter(r=>r.value!=null && r.value>0).sort((a,b)=>b.value-a.value);
-  const tv=withVal.reduce((s,r)=>s+r.value,0);
-  const legend=$("#allocLegend");
-  if(!withVal.length || !window.Chart){ if(legend) legend.innerHTML=""; return; }
-  const top=withVal.slice(0,6);
-  const rest=withVal.slice(6).reduce((s,r)=>s+r.value,0);
-  const labels=top.map(r=>r.asset).concat(rest>0?["Other"]:[]);
-  const vals=top.map(r=>r.value).concat(rest>0?[rest]:[]);
-  const palette=["#8B5CF6","#6366F1","#22D3EE","#16C784","#F59E0B","#EC4899","#64748B"];
-  const ctx=$("#allocChart").getContext("2d");
-  if(state.allocChart) state.allocChart.destroy();
-  state.allocChart=new Chart(ctx,{type:"doughnut",data:{labels,datasets:[{data:vals,backgroundColor:palette,borderWidth:0}]},
-    options:{responsive:true,maintainAspectRatio:false,cutout:"62%",animation:REDUCE_MOTION?false:{duration:400},
-      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.label}: ${fmtMoney(c.parsed/rate())} (${(c.parsed/tv*100).toFixed(1)}%)`}}}}});
-  legend.innerHTML=labels.map((l,i)=>`<span class="lg"><i style="background:${palette[i]}"></i>${esc(l)} ${(vals[i]/tv*100).toFixed(0)}%</span>`).join("");
+/* ---------- holdings flat list (home) ---------- */
+function renderHoldings(){
+  const box=$("#holdingsList"); if(!box) return;
+  const rows=computeRows().sort((a,b)=>(b.value??-1)-(a.value??-1));
+  const n=$("#holdingCount"); if(n) n.textContent=rows.length?String(rows.length):"";
+  if(!rows.length){ box.innerHTML='<div class="empty muted">No holdings yet — import CSV in Settings.</div>'; return; }
+  box.innerHTML=rows.map(r=>{
+    const c=plColorOf(r.unreal);
+    // alert badge (#10) — same rule as the cards grid
+    const tgt=state.alerts[r.asset];
+    const hit = tgt!=null && r.px!=null && r.px>=tgt;
+    const bell = tgt!=null ? `<span class="alert-badge${hit?' hit':''}" title="Target ${esc(fmtMoney(tgt))}">🔔</span>` : "";
+    return `<button class="hrow" data-asset="${esc(r.asset)}">
+      <span class="h-ic" style="--h:${assetHue(r.asset)}">${esc(r.asset.slice(0,1).toUpperCase())}</span>
+      <span class="h-main">
+        <span class="h-name">${esc(r.asset)}</span>
+        <span class="h-sub">${fmtQtyCompact(r.units)}</span>
+      </span>
+      <span class="h-right">
+        <span class="h-val">${fmtMoneyCompact(r.value)}</span>
+        <span class="h-chg" style="color:${c}">${r.unreal==null?"":(r.ret!=null?arrowOf(r.unreal)+" "+pct(r.ret):"free")}</span>
+      </span>${bell}</button>`;
+  }).join("");
 }
 
 /* ---------- cards ---------- */
@@ -448,7 +445,7 @@ async function drawSparkline(a){
   let series=null;
   if(state.hist && state.hist[a.asset]) series=state.hist[a.asset].slice(-30).map(x=>x.p);
   const canvas=$("#sparkCanvas"); if(!canvas) return;
-  if(!series || series.length<2){ canvas.parentElement.innerHTML='<div class="muted small" style="padding:20px 0;text-align:center">Price history loads on the Chart tab.</div>'; return; }
+  if(!series || series.length<2){ canvas.parentElement.innerHTML='<div class="muted small" style="padding:20px 0;text-align:center">Price history loads with the portfolio chart.</div>'; return; }
   const up=series[series.length-1]>=series[0];
   new Chart(canvas.getContext("2d"),{type:"line",data:{labels:series.map((_,i)=>i),
     datasets:[{data:series,borderColor:up?"#16C784":"#EA3943",borderWidth:2,pointRadius:0,tension:.3,fill:false}]},
@@ -542,7 +539,7 @@ async function refresh(manual){
     state.offline=true; loadCachedPrices(); render();
   }finally{ setTimeout(()=>btn.classList.remove("spin"),400); updateFreshness(); }
 }
-function render(){ renderSummaryTab(); renderCards(); renderTable(); }
+function render(){ renderOverview(); renderCards(); renderTable(); }
 function startAuto(){ stopAuto(); if(state.auto){ state.timer=setInterval(()=>refresh(false),15000);}
   $("#autoState").textContent=state.auto?"auto 15s":"auto off"; $("#autoState").className=state.auto?"auto-on":"auto-off"; }
 function stopAuto(){ if(state.timer){clearInterval(state.timer);state.timer=null;} }
@@ -552,7 +549,8 @@ function switchView(name){
   const doIt=()=>{ $$(".view").forEach(v=>v.classList.remove("active"));
     $("#view-"+name).classList.add("active");
     $$(".bottom-nav button").forEach(b=>b.classList.toggle("active", b.dataset.nav===name));
-    if(name==="chart" && !state.chartLoaded) loadChart(); };
+    document.body.classList.toggle("tab-overview", name==="overview");
+    if(name==="overview" && !state.chartLoaded) loadChart(); };
   // View Transitions API (#8) with reduced-motion respect
   if(document.startViewTransition && !REDUCE_MOTION){ document.startViewTransition(doIt); } else { doIt(); }
 }
@@ -609,7 +607,7 @@ function wire(){
     render(); refreshChartsSoon();});
   const setView = (v) => { state.view=v;
     $$("#viewSwitch button,#viewSwitch2 button").forEach(x=>x.classList.toggle("active", +x.dataset.view===v));
-    renderSummaryTab(); renderCards(); };
+    renderOverview(); renderCards(); };
   $("#viewSwitch").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) setView(+b.dataset.view);});
   $("#viewSwitch2").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) setView(+b.dataset.view);});
   $("#tableTabs").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
@@ -634,8 +632,7 @@ function wire(){
   // detail sheet open/close (#1)
   const openFromEl=(el)=>{ const s=el&&el.dataset&&el.dataset.asset; if(s) openDetail(s); };
   $("#cards").addEventListener("click",e=>openFromEl(e.target.closest(".card")));
-  $("#sumWinners").addEventListener("click",e=>openFromEl(e.target.closest(".mini")));
-  $("#sumLosers").addEventListener("click",e=>openFromEl(e.target.closest(".mini")));
+  $("#holdingsList").addEventListener("click",e=>openFromEl(e.target.closest(".hrow")));
   $("#mainTable tbody").addEventListener("click",e=>openFromEl(e.target.closest("tr[data-asset]")));
   $("#detailClose").addEventListener("click",closeDetail);
   $("#detailBackdrop").addEventListener("click",closeDetail);
