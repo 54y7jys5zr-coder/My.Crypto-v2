@@ -446,19 +446,22 @@ function drawChart(hist){
   const valConv=valueSeries.map(v=>v*rt), costLine=days.map(()=>totalCost*rt);
   if(state.chart) state.chart.destroy();
   const ctx=$("#valueChart").getContext("2d");
-  const grad=ctx.createLinearGradient(0,0,0,300);
-  grad.addColorStop(0,"rgba(139,92,246,0.35)"); grad.addColorStop(1,"rgba(139,92,246,0.02)");
+  const cur=valueSeries[valueSeries.length-1], start=valueSeries.find(v=>v>0)||0;
+  const chg=start?((cur-start)/start*100):null;
+  const [lineHex,rgb]=(chg==null||chg===0)?["#8A90A0","138,144,160"]:(chg>0?["#16C784","22,199,132"]:["#EA3943","234,57,67"]);
+  const gh=ctx.canvas.height||150;
+  const grad=ctx.createLinearGradient(0,0,0,gh);
+  grad.addColorStop(0,`rgba(${rgb},0.35)`); grad.addColorStop(1,`rgba(${rgb},0.02)`);
   state.chart=new Chart(ctx,{type:"line",data:{labels,datasets:[
-    {label:"Value",data:valConv,borderColor:"#8B5CF6",backgroundColor:grad,fill:true,tension:.3,pointRadius:0,borderWidth:2},
+    {label:"Value",data:valConv,borderColor:lineHex,backgroundColor:grad,fill:true,tension:.3,pointRadius:0,borderWidth:2},
     {label:"Cost",data:costLine,borderColor:"#8A90A0",borderDash:[6,5],fill:false,pointRadius:0,borderWidth:1.5}
   ]},options:{responsive:true,maintainAspectRatio:false,animation:REDUCE_MOTION?false:{duration:400},
     interaction:{intersect:false,mode:"index"},
     plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmtMoney(c.parsed.y/rt)}`}}},
     scales:{x:{ticks:{maxTicksLimit:6,color:"#8A90A0"},grid:{display:false}},
             y:{ticks:{color:"#8A90A0",callback:v=>fmtMoney(v/rt)},grid:{color:"rgba(138,144,160,.12)"}}}}});
-  const cur=valueSeries[valueSeries.length-1], start=valueSeries.find(v=>v>0)||0;
+  const sw=document.querySelector(".chart-legend .sw.val"); if(sw) sw.style.background=lineHex;
   const hi=Math.max(...valueSeries), lo=Math.min(...valueSeries.filter(v=>v>0));
-  const chg=start?((cur-start)/start*100):null;
   // daily returns for best/worst day, volatility, max drawdown (#2)
   const rets=[]; for(let i=1;i<valueSeries.length;i++){ const p=valueSeries[i-1], c=valueSeries[i];
     if(p>0&&c>0) rets.push((c-p)/p); }
