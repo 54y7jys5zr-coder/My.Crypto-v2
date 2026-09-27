@@ -132,11 +132,7 @@ body.tab-overview .top-label{display:block}
 .chart-box{position:relative;height:150px}
 .chart-box canvas{width:100%!important;height:100%!important;display:block}
 
-/* ============ holdings flat list ============ */
-.sec-h{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
-  margin:20px 0 4px;font-size:0.6875rem;font-weight:700;color:var(--muted);
-  text-transform:uppercase;letter-spacing:.8px}
-.sec-h .muted{font-weight:600;letter-spacing:.4px}
+/* ============ flat row list (portfolio) ============ */
 .holdings{border-top:1px solid var(--line)}
 .hrow{display:flex;align-items:center;gap:11px;width:100%;padding:9px 2px;min-height:52px;
   border:0;border-bottom:1px solid var(--line);background:transparent;color:inherit;font:inherit;
@@ -154,11 +150,12 @@ body.tab-overview .top-label{display:block}
 .h-chg{font-size:0.6875rem;font-weight:700;font-variant-numeric:tabular-nums}
 .hrow .alert-badge{flex:0 0 auto;margin-left:2px;font-size:0.75rem;filter:grayscale(.3);opacity:.7}
 .hrow .alert-badge.hit{filter:none;opacity:1;animation:bell .6s ease}
+@keyframes bell{0%,100%{transform:rotate(0)}25%{transform:rotate(14deg)}75%{transform:rotate(-14deg)}}
 @media (prefers-color-scheme: light){
   .h-ic{background:color-mix(in srgb,hsl(var(--h) 68% 48%) 12%,transparent);color:hsl(var(--h) 72% 34%)}
 }
 
-/* ============ cards ============ */
+/* ============ portfolio tab (hero + controls + flat list) ============ */
 .hero{padding:2px 0 0}
 .hero-label{font-size:0.6875rem;color:var(--muted);text-transform:uppercase;letter-spacing:.7px}
 .hero--compact .hero-value{font-size:1.5rem;font-weight:800;letter-spacing:-.5px;margin:3px 0 1px;
@@ -177,38 +174,6 @@ body.tab-overview .top-label{display:block}
   font-weight:700;font-size:0.75rem;padding:9px 11px;min-height:40px;cursor:pointer;white-space:nowrap}
 .chip-btn.ghost{color:var(--muted)}
 .chip-btn:active{transform:scale(.96)}
-
-.cards{display:grid;grid-template-columns:1fr 1fr;gap:9px}
-@media(min-width:560px){.cards{grid-template-columns:repeat(3,1fr)}}
-.card{position:relative;overflow:hidden;display:block;width:100%;text-align:left;font:inherit;color:inherit;
-  border:1px solid var(--line);border-radius:var(--radius-sm);padding:11px;cursor:pointer;
-  transition:transform .12s,box-shadow .5s}
-.card:active{transform:scale(.98)}
-.card.unpriced{opacity:.72}
-.card.unpriced .ratio{color:var(--red)}
-.card .bar{position:absolute;left:0;top:0;bottom:0;width:3px}
-.card .ratio{position:absolute;right:10px;top:9px;font-size:0.6875rem;font-weight:700;color:var(--muted);
-  font-variant-numeric:tabular-nums}
-.card .sym{font-weight:700;font-size:0.875rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .qty{font-size:0.6875rem;color:var(--muted);margin-top:1px;font-variant-numeric:tabular-nums;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .px{font-size:0.625rem;color:var(--muted);opacity:.85;margin-top:1px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .val{font-size:1.0625rem;font-weight:800;margin-top:7px;min-height:1.2rem;
-  font-variant-numeric:tabular-nums}
-.card .chg{font-size:0.75rem;font-weight:700;margin-top:1px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.card .alert-badge{position:absolute;right:9px;bottom:8px;font-size:0.75rem;filter:grayscale(.3);opacity:.75}
-.card .alert-badge.hit{filter:none;opacity:1;animation:bell .6s ease}
-@keyframes bell{0%,100%{transform:rotate(0)}25%{transform:rotate(14deg)}75%{transform:rotate(-14deg)}}
-.card.flash-up{box-shadow:inset 0 0 0 2px var(--green), 0 0 18px color-mix(in srgb,var(--green) 45%,transparent)}
-.card.flash-down{box-shadow:inset 0 0 0 2px var(--red), 0 0 18px color-mix(in srgb,var(--red) 45%,transparent)}
-.cards.compact{grid-template-columns:repeat(3,1fr);gap:8px}
-@media(min-width:560px){.cards.compact{grid-template-columns:repeat(4,1fr)}}
-.cards.compact .card{padding:9px}
-.cards.compact .px{display:none}
-.cards.compact .val{font-size:0.9375rem}
-.cards.compact .qty,.cards.compact .chg{font-size:0.625rem}
 
 /* ============ tables ============ */
 .table-tabs{display:flex;gap:2px;margin:2px 0 0;padding:2px;border:1px solid var(--line);border-radius:10px}

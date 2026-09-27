@@ -22,18 +22,15 @@ const state = {
   chartLoaded: false,
   chartBusy: false,
   hist: null,          // cached 365d history
-  prevPrices: {},      // for price-move flash
-  cardSort: "value",   // cards sort key
-  cardQuery: "",       // cards search
+  cardSort: "value",   // portfolio sort key
+  cardQuery: "",       // portfolio search
   tableQuery: "",      // table search
-  density: "cozy",     // cozy | compact
   alerts: {},          // symbol -> target price (EUR)
 };
 
 /* persisted prefs */
 function loadPrefs(){
   try{ state.alerts = JSON.parse(localStorage.getItem("alerts")||"{}") || {}; }catch(e){ state.alerts={}; }
-  try{ const d=localStorage.getItem("density"); if(d) state.density=d; }catch(e){}
 }
 function saveAlerts(){ try{ localStorage.setItem("alerts", JSON.stringify(state.alerts)); }catch(e){} }
 
@@ -229,19 +226,36 @@ function renderOverview(){
       <div class="sub">already sold</div></div>
     <div class="stat"><div class="k">Free coins</div><div class="v">${fc==null?"—":fc.toFixed(0)+"%"}</div>
       <div class="sub">of holdings</div></div>`;
-
-  renderHoldings();
 }
 
-/* ---------- holdings flat list (home) ---------- */
-function renderHoldings(){
-  const box=$("#holdingsList"); if(!box) return;
-  const rows=computeRows().sort((a,b)=>(b.value??-1)-(a.value??-1));
-  const n=$("#holdingCount"); if(n) n.textContent=rows.length?String(rows.length):"";
-  if(!rows.length){ box.innerHTML='<div class="empty muted">No holdings yet — import CSV in Settings.</div>'; return; }
-  box.innerHTML=rows.map(r=>{
+/* ---------- portfolio flat list (Cards tab) ---------- */
+function renderPortfolio(){
+  const rows=computeRows(); const t=totals(rows);
+  $(".hero-view-name").textContent = state.view===3 ? "Invested Only" : "All Holdings";
+  const note=$("#viewNote"); if(note) note.textContent = state.view===3
+    ? "Only the coins you paid for (excludes gifts & staking rewards)."
+    : "Everything you hold, including gifts & staking rewards.";
+  $("#heroValue").textContent = fmtMoney(t.v);
+  const plEl=$("#heroPL");
+  plEl.textContent = t.u==null ? "—" : `${arrowOf(t.u)} ${fmtMoney(Math.abs(t.u))} (${pct(t.ret)})`;
+  plEl.style.color = plColorOf(t.u);
+  $("#heroCost").textContent = fmtMoney(t.c);
+
+  const box=$("#portfolioList"); if(!box) return;
+  // filter + sort (#5, #6)
+  let list=rows.slice();
+  const q=state.cardQuery.trim().toUpperCase();
+  if(q) list=list.filter(r=>r.asset.toUpperCase().includes(q));
+  const key=state.cardSort;
+  const cmp={value:(a,b)=>(b.value??-1)-(a.value??-1),
+             unreal:(a,b)=>(b.unreal??-1e18)-(a.unreal??-1e18),
+             ret:(a,b)=>(b.ret??-1e18)-(a.ret??-1e18),
+             asset:(a,b)=>a.asset.localeCompare(b.asset)}[key];
+  list.sort(cmp);
+  if(!list.length){ box.innerHTML='<div class="empty muted">No assets match.</div>'; return; }
+  box.innerHTML=list.map(r=>{
     const c=plColorOf(r.unreal);
-    // alert badge (#10) — same rule as the cards grid
+    // alert badge (#10)
     const tgt=state.alerts[r.asset];
     const hit = tgt!=null && r.px!=null && r.px>=tgt;
     const bell = tgt!=null ? `<span class="alert-badge${hit?' hit':''}" title="Target ${esc(fmtMoney(tgt))}">🔔</span>` : "";
@@ -256,63 +270,6 @@ function renderHoldings(){
         <span class="h-chg" style="color:${c}">${r.unreal==null?"":(r.ret!=null?arrowOf(r.unreal)+" "+pct(r.ret):"free")}</span>
       </span>${bell}</button>`;
   }).join("");
-}
-
-/* ---------- cards ---------- */
-function renderCards(){
-  const rows=computeRows(); const t=totals(rows);
-  $(".hero-view-name").textContent = state.view===3 ? "Invested Only" : "All Holdings";
-  const note=$("#viewNote"); if(note) note.textContent = state.view===3
-    ? "Only the coins you paid for (excludes gifts & staking rewards)."
-    : "Everything you hold, including gifts & staking rewards.";
-  $("#heroValue").textContent = fmtMoney(t.v);
-  const plEl=$("#heroPL");
-  plEl.textContent = t.u==null ? "—" : `${arrowOf(t.u)} ${fmtMoney(Math.abs(t.u))} (${pct(t.ret)})`;
-  plEl.style.color = plColorOf(t.u);
-  $("#heroCost").textContent = fmtMoney(t.c);
-
-  const box=$("#cards"); box.className="cards"+(state.density==="compact"?" compact":"");
-  box.innerHTML="";
-  // filter + sort (#5, #6)
-  let list=rows.slice();
-  const q=state.cardQuery.trim().toUpperCase();
-  if(q) list=list.filter(r=>r.asset.toUpperCase().includes(q));
-  const key=state.cardSort;
-  const cmp={value:(a,b)=>(b.value??-1)-(a.value??-1),
-             unreal:(a,b)=>(b.unreal??-1e18)-(a.unreal??-1e18),
-             ret:(a,b)=>(b.ret??-1e18)-(a.ret??-1e18),
-             asset:(a,b)=>a.asset.localeCompare(b.asset)}[key];
-  list.sort(cmp);
-  if(!list.length){ box.innerHTML='<div class="empty muted">No assets match.</div>'; return; }
-  for(const r of list){
-    const col=ratioColor(r.ratio);
-    const el=document.createElement("button");
-    el.className="card"+(r.priced?"":" unpriced"); el.style.background=col.dim;
-    el.dataset.asset=r.asset;
-    // price-move flash (#9)
-    const prev=state.prevPrices[r.asset];
-    if(prev!=null && r.px!=null && r.px!==prev) el.dataset.flash = r.px>prev?"up":"down";
-    // alert badge (#10)
-    const tgt=state.alerts[r.asset];
-    const hit = tgt!=null && r.px!=null && r.px>=tgt;
-    const bell = tgt!=null ? `<span class="alert-badge${hit?' hit':''}" title="Target ${fmtMoney(tgt)}">🔔</span>` : "";
-    el.innerHTML=`
-      <div class="bar" style="background:${col.c}"></div>
-      <div class="ratio">${r.priced&&r.ratio!=null?(r.ratio).toFixed(2)+"×":(r.priced?"":"⚠")}</div>
-      ${bell}
-      <div class="sym">${esc(r.asset)}</div>
-      <div class="qty">${fmtQtyCompact(r.units)}</div>
-      <div class="px">@ ${r.px==null?"—":fmtPrice(r.px)}</div>
-      <div class="val">${fmtMoneyCompact(r.value)}</div>
-      <div class="chg" style="color:${plColorOf(r.unreal)}">
-        <span class="arrow">${arrowOf(r.unreal)}</span> ${r.unreal==null?"no price":fmtMoneyCompact(Math.abs(r.unreal))+" · "+pct(r.ret)}
-      </div>`;
-    box.appendChild(el);
-    if(el.dataset.flash && !REDUCE_MOTION){ requestAnimationFrame(()=>{ el.classList.add("flash-"+el.dataset.flash);
-      setTimeout(()=>el.classList.remove("flash-up","flash-down"),900); }); }
-  }
-  // remember prices for next flash compare
-  state.prevPrices = Object.assign({}, state.prices);
 }
 
 /* ---------- table (sortable #3) ---------- */
@@ -433,10 +390,10 @@ function openDetail(sym){
   const setBtn=$("#alertSet");
   if(setBtn) setBtn.addEventListener("click",()=>{
     const raw=parseFloat($("#alertInput").value);
-    if(!isNaN(raw)&&raw>0){ state.alerts[sym]=raw/rate(); saveAlerts(); renderCards(); openDetail(sym); }
+    if(!isNaN(raw)&&raw>0){ state.alerts[sym]=raw/rate(); saveAlerts(); renderPortfolio(); openDetail(sym); }
   });
   const clrBtn=$("#alertClear");
-  if(clrBtn) clrBtn.addEventListener("click",()=>{ delete state.alerts[sym]; saveAlerts(); renderCards(); openDetail(sym); });
+  if(clrBtn) clrBtn.addEventListener("click",()=>{ delete state.alerts[sym]; saveAlerts(); renderPortfolio(); openDetail(sym); });
   drawSparkline(a);
 }
 function closeDetail(){ $("#detailSheet").classList.remove("open"); $("#detailBackdrop").classList.remove("open"); }
@@ -539,7 +496,7 @@ async function refresh(manual){
     state.offline=true; loadCachedPrices(); render();
   }finally{ setTimeout(()=>btn.classList.remove("spin"),400); updateFreshness(); }
 }
-function render(){ renderOverview(); renderCards(); renderTable(); }
+function render(){ renderOverview(); renderPortfolio(); renderTable(); }
 function startAuto(){ stopAuto(); if(state.auto){ state.timer=setInterval(()=>refresh(false),15000);}
   $("#autoState").textContent=state.auto?"auto 15s":"auto off"; $("#autoState").className=state.auto?"auto-on":"auto-off"; }
 function stopAuto(){ if(state.timer){clearInterval(state.timer);state.timer=null;} }
@@ -607,7 +564,7 @@ function wire(){
     render(); refreshChartsSoon();});
   const setView = (v) => { state.view=v;
     $$("#viewSwitch button,#viewSwitch2 button").forEach(x=>x.classList.toggle("active", +x.dataset.view===v));
-    renderOverview(); renderCards(); };
+    renderOverview(); renderPortfolio(); };
   $("#viewSwitch").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) setView(+b.dataset.view);});
   $("#viewSwitch2").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) setView(+b.dataset.view);});
   $("#tableTabs").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
@@ -618,11 +575,9 @@ function wire(){
   $("#refreshBtn").addEventListener("click",()=>refresh(true));
   $("#autoToggle").addEventListener("change",e=>{state.auto=e.target.checked; startAuto();});
 
-  // card search + sort + density (#5, #6, #11)
-  const cs=$("#cardSearch"); if(cs) cs.addEventListener("input",e=>{ state.cardQuery=e.target.value; renderCards(); });
-  const cso=$("#cardSort"); if(cso) cso.addEventListener("change",e=>{ state.cardSort=e.target.value; renderCards(); });
-  const db=$("#densityBtn"); if(db) db.addEventListener("click",()=>{ state.density=state.density==="compact"?"cozy":"compact";
-    try{localStorage.setItem("density",state.density);}catch(_){} db.classList.toggle("on",state.density==="compact"); renderCards(); });
+  // portfolio search + sort (#5, #6)
+  const cs=$("#cardSearch"); if(cs) cs.addEventListener("input",e=>{ state.cardQuery=e.target.value; renderPortfolio(); });
+  const cso=$("#cardSort"); if(cso) cso.addEventListener("change",e=>{ state.cardSort=e.target.value; renderPortfolio(); });
   // table search (#5)
   const ts2=$("#tableSearch"); if(ts2) ts2.addEventListener("input",e=>{ state.tableQuery=e.target.value; renderTable(); });
   // export CSV + share (#8)
@@ -631,8 +586,7 @@ function wire(){
 
   // detail sheet open/close (#1)
   const openFromEl=(el)=>{ const s=el&&el.dataset&&el.dataset.asset; if(s) openDetail(s); };
-  $("#cards").addEventListener("click",e=>openFromEl(e.target.closest(".card")));
-  $("#holdingsList").addEventListener("click",e=>openFromEl(e.target.closest(".hrow")));
+  $("#portfolioList").addEventListener("click",e=>openFromEl(e.target.closest(".hrow")));
   $("#mainTable tbody").addEventListener("click",e=>openFromEl(e.target.closest("tr[data-asset]")));
   $("#detailClose").addEventListener("click",closeDetail);
   $("#detailBackdrop").addEventListener("click",closeDetail);
@@ -702,7 +656,6 @@ async function init(){
   loadPrefs();
   try{ const s=localStorage.getItem("type_scale"); if(s) document.documentElement.style.setProperty("--type-scale",s); }catch(_){}
   wire();
-  const db=$("#densityBtn"); if(db) db.classList.toggle("on",state.density==="compact");
   try{ const s=localStorage.getItem("type_scale")||"1"; $$("#textSize button").forEach(b=>b.classList.toggle("active",b.dataset.scale===s)); }catch(_){}
   // onboarding (first run)
   try{ if(!localStorage.getItem("onboarded")){ const ob=$("#onboard"); if(ob) ob.classList.add("show"); } }catch(_){}
