@@ -1,5 +1,5 @@
 /* Service worker: offline app shell. Prices/FX are always fetched live (network-first, no cache). */
-const CACHE = "portfolio-v13";
+const CACHE = "portfolio-v14";
 const SHELL = [
   "./","./index.html","./styles.css","./app.js","./engine.js","./data.json",
   "./chart.umd.min.js","./manifest.webmanifest",
@@ -18,12 +18,12 @@ self.addEventListener("fetch", e=>{
   if(url.hostname.includes("coingecko")||url.hostname.includes("coinbase")||url.hostname.includes("frankfurter")||url.hostname.includes("exchangerate")){
     return; // let it hit network directly
   }
-  // app shell: cache-first, fall back to network
+  // app shell: network-first, cache fallback (online = always fresh, offline = cached, no manual cache bumps)
   e.respondWith(
-    caches.match(e.request).then(r=> r || fetch(e.request).then(resp=>{
+    fetch(e.request).then(resp=>{
       const copy=resp.clone();
       if(e.request.method==="GET" && resp.status===200) caches.open(CACHE).then(c=>c.put(e.request,copy));
       return resp;
-    }).catch(()=>caches.match("./index.html")))
+    }).catch(()=>caches.match(e.request).then(r=>r||caches.match("./index.html")))
   );
 });
