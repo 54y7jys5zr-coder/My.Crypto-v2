@@ -22,17 +22,38 @@ const state = {
   chartLoaded: false,
   chartBusy: false,
   hist: null,          // cached 365d history
-  cardSort: "value",   // portfolio sort key
+  sparks: {},          // symbol -> last 30 daily prices (memory only, sparklines)
+  chartRange: 365,     // chart window in days (365|30|7)
+  cardSort: "ret",     // portfolio sort key
   cardQuery: "",       // portfolio search
   tableQuery: "",      // table search
   alerts: {},          // symbol -> target price (EUR)
 };
 
-/* persisted prefs */
+/* persisted prefs: "alerts" holds targets, "prefs" holds UI choices. Queries are never stored. */
 function loadPrefs(){
   try{ state.alerts = JSON.parse(localStorage.getItem("alerts")||"{}") || {}; }catch(e){ state.alerts={}; }
+  let p={};
+  try{ p = JSON.parse(localStorage.getItem("prefs")||"{}") || {}; }catch(e){ p={}; }
+  state.cardSort  = p.cardSort  || "ret";
+  state.chartRange= +p.chartRange || 365;
+  state.view      = +p.view      || 1;
+  state.tableOpt  = +p.tableOpt  || 1;
+  state.sortKey   = p.sortKey   || "value";
+  state.sortDir   = +p.sortDir  || -1;
+}
+function savePrefs(){
+  try{ localStorage.setItem("prefs", JSON.stringify({
+    cardSort:state.cardSort, chartRange:state.chartRange, view:state.view,
+    tableOpt:state.tableOpt, sortKey:state.sortKey, sortDir:state.sortDir })); }catch(e){}
 }
 function saveAlerts(){ try{ localStorage.setItem("alerts", JSON.stringify(state.alerts)); }catch(e){} }
+function applyPrefUI(){
+  const cso=$("#cardSort"); if(cso) cso.value=state.cardSort;
+  $$("#chartRange button").forEach(x=>x.classList.toggle("active",+x.dataset.range===state.chartRange));
+  $$("#viewSwitch button,#viewSwitch2 button").forEach(x=>x.classList.toggle("active",+x.dataset.view===state.view));
+  $$("#tableTabs button").forEach(x=>x.classList.toggle("active",+x.dataset.t===state.tableOpt));
+}
 
 /* ---------- formatting ---------- */
 const esc = s => s==null ? "" : String(s).replace(/[&<>"'`]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;","`":"&#96;"}[c]));
@@ -62,8 +83,7 @@ const fmtPrice = (eur) => {
   const v = eur * rate(); const a = Math.abs(v);
   let dp;
   if (a === 0)      dp = 2;
-  else if (a >= 1000) dp = 2;
-  else if (a >= 1)  dp = 4;
+  else if (a >= 1)  dp = 2;        // €63.07 — display prices, not exchange tick sizes
   else if (a >= 0.01) dp = 6;
   else {
     // very small: show ~4 significant figures after the leading zeros
@@ -166,12 +186,6 @@ function lifetimePL(){
   const r1=computeForView(1); const realized=state.data.meta.total_realized||0;
   return { realized, unreal:r1.u, total:(r1.u!=null?r1.u:0)+realized, haveUnreal:r1.u!=null };
 }
-/* free-coins share of holdings value */
-function freeCoinsShare(){
-  const r1=computeForView(1), r3=computeForView(3);
-  if(r1.v==null||r3.v==null||r1.v<=0) return null;
-  return (r1.v-r3.v)/r1.v*100;
-}
 
 /* ---------- freshness ("updated 12s ago") ---------- */
 function relTime(ts){
@@ -210,22 +224,19 @@ function renderOverview(){
   pl.style.color = plColorOf(t.u);
   $("#sumHeroCost").textContent=fmtMoney(t.c);
 
-  // lifetime P/L (realized + unrealized) + free-coins share
-  const lt=lifetimePL(); const fc=freeCoinsShare(); const ltEl=$("#heroLifetime");
+  // lifetime P/L (realized + unrealized)
+  const lt=lifetimePL(); const ltEl=$("#heroLifetime");
   if(ltEl){ const c=plColorOf(lt.total);
     ltEl.innerHTML = `<span class="lt-k">Lifetime P/L</span> `+
       (lt.haveUnreal
         ? `<span class="lt-v" style="color:${c}">${arrowOf(lt.total)} ${fmtMoney(lt.total)}</span>`
-        : `<span class="lt-v muted">—</span>`)+
-      (fc!=null?` <span class="muted">· ${fc.toFixed(0)}% free coins</span>`:"");
+        : `<span class="lt-v muted">—</span>`);
   }
   $("#sumStats").innerHTML=`
     <div class="stat"><div class="k">Net invested</div><div class="v">${fmtMoney(m.net_deposited)}</div>
       <div class="sub">cash in − out</div></div>
     <div class="stat"><div class="k">Realized</div><div class="v" style="color:${plColorOf(m.total_realized)}">${fmtMoney(m.total_realized)}</div>
-      <div class="sub">already sold</div></div>
-    <div class="stat"><div class="k">Free coins</div><div class="v">${fc==null?"—":fc.toFixed(0)+"%"}</div>
-      <div class="sub">of holdings</div></div>`;
+      <div class="sub">already sold</div></div>`;
 }
 
 /* ---------- portfolio flat list (Cards tab) ---------- */
@@ -263,7 +274,7 @@ function renderPortfolio(){
       <span class="h-ic" style="--h:${assetHue(r.asset)}">${esc(r.asset.slice(0,1).toUpperCase())}</span>
       <span class="h-main">
         <span class="h-name">${esc(r.asset)}</span>
-        <span class="h-sub">${fmtQtyCompact(r.units)}</span>
+        <span class="h-sub">${fmtQtyCompact(r.units)} | ${r.px==null?"—":fmtPrice(r.px)}</span>
       </span>
       <span class="h-right">
         <span class="h-val">${fmtMoneyCompact(r.value)}</span>
@@ -397,15 +408,42 @@ function openDetail(sym){
   drawSparkline(a);
 }
 function closeDetail(){ $("#detailSheet").classList.remove("open"); $("#detailBackdrop").classList.remove("open"); }
+const SPARK_PLACEHOLDER='<div class="muted small" style="padding:20px 0;text-align:center">Price history loads…</div>';
+const SPARK_CANVAS='<canvas id="sparkCanvas"></canvas>';
+/* 30 daily closes: memory cache first, then the 365d history, then nothing */
+function sparkPoints(a){
+  let pts=state.sparks[a.asset];
+  if((!pts||pts.length<2) && state.hist && state.hist[a.asset])
+    pts=state.sparks[a.asset]=state.hist[a.asset].slice(-30).map(x=>x.p);
+  return (pts&&pts.length>=2)?pts:null;
+}
+async function fetchSpark(a){
+  try{
+    const u=`https://api.coingecko.com/api/v3/coins/${encodeURIComponent(a.cg_id)}/market_chart?vs_currency=eur&days=30&interval=daily`;
+    const r=await fetch(u); if(!r.ok) return null;
+    const d=await r.json();
+    const arr=(d.prices||[]).map(p=>p[1]).slice(-30);
+    if(arr.length<2) return null;
+    state.sparks[a.asset]=arr; return arr;
+  }catch(e){ return null; }
+}
 async function drawSparkline(a){
   if(!window.Chart) return;
-  let series=null;
-  if(state.hist && state.hist[a.asset]) series=state.hist[a.asset].slice(-30).map(x=>x.p);
   const canvas=$("#sparkCanvas"); if(!canvas) return;
-  if(!series || series.length<2){ canvas.parentElement.innerHTML='<div class="muted small" style="padding:20px 0;text-align:center">Price history loads with the portfolio chart.</div>'; return; }
-  const up=series[series.length-1]>=series[0];
-  new Chart(canvas.getContext("2d"),{type:"line",data:{labels:series.map((_,i)=>i),
-    datasets:[{data:series,borderColor:up?"#16C784":"#EA3943",borderWidth:2,pointRadius:0,tension:.3,fill:false}]},
+  const box=canvas.parentElement;
+  let pts=sparkPoints(a);
+  if(!pts){
+    box.innerHTML=SPARK_PLACEHOLDER;
+    if(!a.cg_id) return;
+    pts=await fetchSpark(a);
+    if(!pts) return;                                        // failure keeps the placeholder
+    if($("#detailTitle").textContent!==a.asset) return;     // sheet moved on to another asset
+    box.innerHTML=SPARK_CANVAS;
+  }
+  const cv=$("#sparkCanvas"); if(!cv) return;
+  const up=pts[pts.length-1]>=pts[0];
+  new Chart(cv.getContext("2d"),{type:"line",data:{labels:pts.map((_,i)=>i),
+    datasets:[{data:pts,borderColor:up?"#16C784":"#EA3943",borderWidth:2,pointRadius:0,tension:.3,fill:false}]},
     options:{responsive:true,maintainAspectRatio:false,animation:REDUCE_MOTION?false:{duration:300},
       plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}});
 }
@@ -438,49 +476,71 @@ function drawChart(hist){
   let base=null;
   for(const a of state.data.assets){ const h=hist[a.asset]; if(h&&(!base||h.length>base.length)) base=h; }
   if(!base) return;
+  const range=+state.chartRange||365;
   const days=base.map(x=>x.t);
   const valueSeries=days.map((t,i)=>{ let v=0; for(const a of state.data.assets){ const h=hist[a.asset]; if(!h||!h[i]) continue; v+=a.quantity*h[i].p; } return v; });
   const totalCost=state.data.assets.reduce((s,a)=>s+a.cost_basis,0);
   const rt=rate();
-  const labels=days.map(t=>new Date(t).toLocaleDateString(undefined,{month:"short",day:"numeric"}));
-  const valConv=valueSeries.map(v=>v*rt), costLine=days.map(()=>totalCost*rt);
+  const dayLabel=t=>new Date(t).toLocaleDateString(undefined,{month:"short",day:"numeric"});
+  // display window = last `range` points; the full 365d series stays for the slice boundary
+  const from=Math.max(0,valueSeries.length-range);
+  const slDays=days.slice(from), slVals=valueSeries.slice(from);
+  const labels=slDays.map(dayLabel);
+  const valConv=slVals.map(v=>v*rt), costLine=slDays.map(()=>totalCost*rt);
+  const secK=document.querySelector(".ov-sec-k"); if(secK) secK.textContent=range+" days";
   if(state.chart) state.chart.destroy();
   const ctx=$("#valueChart").getContext("2d");
-  const cur=valueSeries[valueSeries.length-1], start=valueSeries.find(v=>v>0)||0;
-  const chg=start?((cur-start)/start*100):null;
-  const [lineHex,rgb]=(chg==null||chg===0)?["#8A90A0","138,144,160"]:(chg>0?["#16C784","22,199,132"]:["#EA3943","234,57,67"]);
+  const start=slVals.find(v=>v>0)||0, lastVal=slVals[slVals.length-1]||0;
+  const liveV=computeForView(1).v;
+  const trend=start?((lastVal-start)/start*100):null;
+  const chg=(start&&liveV!=null)?((liveV-start)/start*100):null;
+  const [lineHex,rgb]=(trend==null||trend===0)?["#8A90A0","138,144,160"]:(trend>0?["#16C784","22,199,132"]:["#EA3943","234,57,67"]);
   const gh=ctx.canvas.height||150;
   const grad=ctx.createLinearGradient(0,0,0,gh);
   grad.addColorStop(0,`rgba(${rgb},0.35)`); grad.addColorStop(1,`rgba(${rgb},0.02)`);
+  const css=getComputedStyle(document.documentElement);
+  const ink=(n)=>(css.getPropertyValue(n)||"").trim();
+  const tint=ink("--card"), txtc=ink("--txt"), edge=ink("--line")||"rgba(255,255,255,.08)";
+  // day-over-day change of a displayed point, read off the full series
+  const dayDelta=(i)=>{ const prev=i>0?valueSeries[i-1]:null, cur=valueSeries[i];
+    return (prev!=null&&prev>0)?{d:cur-prev,p:(cur-prev)/prev*100}:null; };
+  const deltaHex=(d)=>d==null?"#8A90A0":(d>=0?"#16C784":"#EA3943");
   state.chart=new Chart(ctx,{type:"line",data:{labels,datasets:[
     {label:"Value",data:valConv,borderColor:lineHex,backgroundColor:grad,fill:true,tension:.3,pointRadius:0,borderWidth:2},
     {label:"Cost",data:costLine,borderColor:"#8A90A0",borderDash:[6,5],fill:false,pointRadius:0,borderWidth:1.5}
   ]},options:{responsive:true,maintainAspectRatio:false,animation:REDUCE_MOTION?false:{duration:400},
     interaction:{intersect:false,mode:"index"},
-    plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`${c.dataset.label}: ${fmtMoney(c.parsed.y/rt)}`}}},
-    scales:{x:{ticks:{maxTicksLimit:6,color:"#8A90A0"},grid:{display:false}},
-            y:{ticks:{color:"#8A90A0",callback:v=>fmtMoney(v/rt)},grid:{color:"rgba(138,144,160,.12)"}}}}});
+    plugins:{legend:{display:false},tooltip:{backgroundColor:tint,titleColor:txtc,bodyColor:txtc,borderColor:edge,
+      borderWidth:1,cornerRadius:10,padding:9,boxPadding:4,displayColors:true,
+      callbacks:{
+        title:items=>dayLabel(days[from+items[0].dataIndex]),
+        label:c=>{
+          if(c.datasetIndex===1) return `${c.dataset.label}: ${fmtMoney(c.parsed.y/rt)}`;
+          const dd=dayDelta(from+c.dataIndex);
+          return dd?`${arrowOf(dd.d)} ${fmtMoney(Math.abs(dd.d))} (${pct(dd.p)})`:fmtMoney(valueSeries[from+c.dataIndex]);
+        },
+        labelColor:c=>{
+          const col=c.datasetIndex===1?"#8A90A0":deltaHex((dayDelta(from+c.dataIndex)||{}).d);
+          return {borderColor:col,backgroundColor:col,color:col};
+        }}}},
+    scales:{x:{ticks:{display:false},grid:{display:false}},
+            y:{ticks:{display:false},grid:{color:"rgba(138,144,160,.12)"}}}}});
   const sw=document.querySelector(".chart-legend .sw.val"); if(sw) sw.style.background=lineHex;
-  const hi=Math.max(...valueSeries), lo=Math.min(...valueSeries.filter(v=>v>0));
-  // daily returns for best/worst day, volatility, max drawdown (#2)
-  const rets=[]; for(let i=1;i<valueSeries.length;i++){ const p=valueSeries[i-1], c=valueSeries[i];
+  const sl=slVals.filter(v=>v>0);
+  const hi=sl.length?Math.max(...sl):null, lo=sl.length?Math.min(...sl):null;
+  // daily returns inside the window (includes the change into the window's first day)
+  const rets=[]; for(let i=Math.max(1,from);i<valueSeries.length;i++){ const p=valueSeries[i-1], c=valueSeries[i];
     if(p>0&&c>0) rets.push((c-p)/p); }
   const bestDay = rets.length?Math.max(...rets)*100:null;
   const worstDay= rets.length?Math.min(...rets)*100:null;
-  const mean = rets.length?rets.reduce((s,x)=>s+x,0)/rets.length:0;
-  const variance = rets.length?rets.reduce((s,x)=>s+(x-mean)**2,0)/rets.length:0;
-  const vol = Math.sqrt(variance)*Math.sqrt(365)*100; // annualized %
-  let peak=-Infinity, maxDD=0; for(const v of valueSeries){ if(v>peak) peak=v; if(peak>0){ const dd=(v-peak)/peak; if(dd<maxDD) maxDD=dd; } }
   const stat=(k,v,color)=>`<div class="stat"><div class="k">${k}</div><div class="v"${color?` style="color:${color}"`:""}>${v}</div></div>`;
   $("#chartStats").innerHTML=
-    stat("Current value", fmtMoney(cur))+
-    stat("365-day change", `${arrowOf(chg)} ${pct(chg)}`, chg>=0?'var(--green)':'var(--red)')+
-    stat("365-day high", fmtMoney(hi))+
-    stat("365-day low", fmtMoney(lo))+
+    stat("Current value", fmtMoney(liveV))+
+    stat(`${range}-day change`, `${arrowOf(chg)} ${pct(chg)}`, chg>=0?'var(--green)':'var(--red)')+
+    stat(`${range}-day high`, hi==null?"—":fmtMoney(hi))+
+    stat(`${range}-day low`, lo==null?"—":fmtMoney(lo))+
     stat("Best day", bestDay==null?"—":pct(bestDay), 'var(--green)')+
-    stat("Worst day", worstDay==null?"—":pct(worstDay), 'var(--red)')+
-    stat("Max drawdown", maxDD?pct(maxDD*100):"—", 'var(--red)')+
-    stat("Volatility (ann.)", vol?vol.toFixed(0)+"%":"—");
+    stat("Worst day", worstDay==null?"—":pct(worstDay), 'var(--red)');
   state.chartLoaded=true;
 }
 /* debounced chart refresh (#12) */
@@ -565,22 +625,29 @@ function wire(){
   $("#ccyToggle").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
     state.ccy=b.dataset.ccy; $$("#ccyToggle button").forEach(x=>x.classList.toggle("active",x===b));
     render(); refreshChartsSoon();});
-  const setView = (v) => { state.view=v;
+  const setView = (v) => { state.view=v; savePrefs();
     $$("#viewSwitch button,#viewSwitch2 button").forEach(x=>x.classList.toggle("active", +x.dataset.view===v));
     renderOverview(); renderPortfolio(); };
   $("#viewSwitch").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) setView(+b.dataset.view);});
   $("#viewSwitch2").addEventListener("click",e=>{const b=e.target.closest("button"); if(b) setView(+b.dataset.view);});
   $("#tableTabs").addEventListener("click",e=>{const b=e.target.closest("button"); if(!b)return;
-    state.tableOpt=+b.dataset.t; $$("#tableTabs button").forEach(x=>x.classList.toggle("active",x===b)); renderTable();});
+    state.tableOpt=+b.dataset.t; savePrefs(); $$("#tableTabs button").forEach(x=>x.classList.toggle("active",x===b)); renderTable();});
   // sortable headers (#3)
   $("#mainTable thead").addEventListener("click",e=>{const th=e.target.closest("th[data-sort]"); if(!th)return;
-    const k=th.dataset.sort; if(state.sortKey===k) state.sortDir*=-1; else{ state.sortKey=k; state.sortDir=(k==="asset")?1:-1; } renderTable();});
+    const k=th.dataset.sort; if(state.sortKey===k) state.sortDir*=-1; else{ state.sortKey=k; state.sortDir=(k==="asset")?1:-1; }
+    savePrefs(); renderTable();});
+  // chart range filter — redraws through drawChart, which destroys the old instance first
+  $("#chartRange").addEventListener("click",e=>{const b=e.target.closest("button[data-range]"); if(!b)return;
+    const r=+b.dataset.range; if(r===state.chartRange) return;
+    state.chartRange=r; savePrefs();
+    $$("#chartRange button").forEach(x=>x.classList.toggle("active",x===b));
+    if(state.hist) drawChart(state.hist); });
   $("#refreshBtn").addEventListener("click",()=>refresh(true));
   $("#autoToggle").addEventListener("change",e=>{state.auto=e.target.checked; startAuto();});
 
   // portfolio search + sort (#5, #6)
   const cs=$("#cardSearch"); if(cs) cs.addEventListener("input",e=>{ state.cardQuery=e.target.value; renderPortfolio(); });
-  const cso=$("#cardSort"); if(cso) cso.addEventListener("change",e=>{ state.cardSort=e.target.value; renderPortfolio(); });
+  const cso=$("#cardSort"); if(cso) cso.addEventListener("change",e=>{ state.cardSort=e.target.value; savePrefs(); renderPortfolio(); });
   // table search (#5)
   const ts2=$("#tableSearch"); if(ts2) ts2.addEventListener("input",e=>{ state.tableQuery=e.target.value; renderTable(); });
   // export CSV + share (#8)
@@ -659,6 +726,7 @@ async function init(){
   loadPrefs();
   try{ const s=localStorage.getItem("type_scale"); if(s) document.documentElement.style.setProperty("--type-scale",s); }catch(_){}
   wire();
+  applyPrefUI();
   try{ const s=localStorage.getItem("type_scale")||"1"; $$("#textSize button").forEach(b=>b.classList.toggle("active",b.dataset.scale===s)); }catch(_){}
   // onboarding (first run)
   try{ if(!localStorage.getItem("onboarded")){ const ob=$("#onboard"); if(ob) ob.classList.add("show"); } }catch(_){}

@@ -77,7 +77,11 @@
           <span><i class="sw cost"></i>Cost basis</span>
         </span>
       </div>
-      <span class="muted fine">approx.</span>
+      <div class="chart-range" id="chartRange" role="group" aria-label="Chart range">
+        <button data-range="365" class="active">1Y</button>
+        <button data-range="30">1M</button>
+        <button data-range="7">1W</button>
+      </div>
     </div>
     <div class="chart-box"><canvas id="valueChart"></canvas></div>
     <div id="chartStats" class="chart-stats"></div>
@@ -104,7 +108,7 @@
         <select id="cardSort" aria-label="Sort portfolio">
           <option value="value">Sort: Value</option>
           <option value="unreal">Sort: Profit/Loss</option>
-          <option value="ret">Sort: Return %</option>
+          <option value="ret" selected>Sort: Return %</option>
           <option value="asset">Sort: Name</option>
         </select>
       </div>

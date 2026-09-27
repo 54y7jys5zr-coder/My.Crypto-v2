@@ -114,6 +114,8 @@ body.tab-overview .top-label{display:block}
 /* compact 3-up stat strip (hairline grid, no boxes) */
 .stat-strip,.chart-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;
   background:var(--line);border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:14px 0 0}
+/* overview strip sizes to however many stats it holds, so no empty hairline cell */
+.stat-strip{grid-template-columns:repeat(auto-fit,minmax(0,1fr))}
 .chart-stats{margin:8px 0 0}
 .stat-strip .stat,.chart-stats .stat{background:var(--bg);padding:9px 4px;min-width:0}
 .stat .k{font-size:0.625rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;
@@ -131,6 +133,13 @@ body.tab-overview .top-label{display:block}
 .sw.val{background:var(--accent2)} .sw.cost{background:var(--muted)}
 .chart-box{position:relative;height:150px}
 .chart-box canvas{width:100%!important;height:100%!important;display:block}
+/* range filter — same hairline pill + accent-tint active as .view-switch */
+.chart-range{display:inline-flex;align-self:center;gap:2px;padding:2px;flex:0 0 auto;
+  border:1px solid var(--line);border-radius:10px}
+.chart-range button{border:0;background:transparent;color:var(--muted);padding:5px 10px;
+  border-radius:8px;font-size:0.6875rem;font-weight:700;letter-spacing:.2px;cursor:pointer;
+  min-height:28px;min-width:34px}
+.chart-range button.active{background:color-mix(in srgb,var(--accent) 16%,transparent);color:var(--accent)}
 
 /* ============ flat row list (portfolio) ============ */
 .holdings{border-top:1px solid var(--line)}
@@ -145,9 +154,13 @@ body.tab-overview .top-label{display:block}
 .h-name{font-size:0.9375rem;font-weight:600;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .h-sub{font-size:0.6875rem;color:var(--muted);font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.h-right{display:flex;flex-direction:column;align-items:flex-end;flex:0 0 auto;text-align:right}
-.h-val{font-size:0.9375rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
-.h-chg{font-size:0.6875rem;font-weight:700;font-variant-numeric:tabular-nums}
+/* the value column may shrink, but never past half the row — long names/qty/price give way first */
+.h-right{display:flex;flex-direction:column;align-items:flex-end;flex:0 1 auto;min-width:0;
+  max-width:50%;text-align:right}
+.h-val{font-size:0.9375rem;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.h-chg{font-size:0.6875rem;font-weight:700;font-variant-numeric:tabular-nums;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hrow .alert-badge{flex:0 0 auto;margin-left:2px;font-size:0.75rem;filter:grayscale(.3);opacity:.7}
 .hrow .alert-badge.hit{filter:none;opacity:1;animation:bell .6s ease}
 @keyframes bell{0%,100%{transform:rotate(0)}25%{transform:rotate(14deg)}75%{transform:rotate(-14deg)}}
